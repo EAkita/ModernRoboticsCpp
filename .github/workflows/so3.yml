@@ -1,0 +1,26 @@
+name: SO3 numerical regression
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  so3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install Eigen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libeigen3-dev
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build SO3 regression
+        run: cmake --build build --target async_so3_roundtrip --parallel 2
+      - name: Execute SO3 regression
+        run: ctest --test-dir build --output-on-failure -R '^async_so3_roundtrip$'
