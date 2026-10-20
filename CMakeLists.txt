@@ -98,6 +98,12 @@ set(LIB_TEST_SOURCES
 add_executable(lib_test ${LIB_TEST_SOURCES})
 target_link_libraries( lib_test ModernRoboticsCpp gtest_main)
 
+# M2: executable SO(3) regression, including nonfinite assertion controls.
+enable_testing()
+add_executable(async_so3_roundtrip tests/async_so3_roundtrip.cpp)
+target_link_libraries(async_so3_roundtrip ModernRoboticsCpp)
+add_test(NAME async_so3_roundtrip COMMAND async_so3_roundtrip)
+
 
 
 install (TARGETS ModernRoboticsCpp
