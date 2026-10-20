@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <string>
 
 namespace {
@@ -30,16 +31,58 @@ void fail(const std::string& msg) {
   ++g_failures;
 }
 
-void expectNear(double actual, double expected, const char* what,
+enum class NearResult {
+  kPass,           // both inputs finite and within tolerance
+  kNonFinite,      // at least one input is NaN or +/-inf
+  kOutOfTolerance  // both inputs finite but |actual - expected| > tol
+};
+
+const char* NearResultName(NearResult r) {
+  switch (r) {
+    case NearResult::kPass:
+      return "pass";
+    case NearResult::kNonFinite:
+      return "non-finite";
+    case NearResult::kOutOfTolerance:
+      return "out-of-tolerance";
+  }
+  return "unknown";
+}
+
+// Classifies a comparison without mutating global failure state. NaN and
+// infinities are rejected up front so that NaN/NaN or inf-inf arithmetic can
+// never be mistaken for a passing comparison.
+NearResult checkNear(double actual, double expected, double tol) {
+  if (!std::isfinite(actual) || !std::isfinite(expected)) {
+    return NearResult::kNonFinite;
+  }
+  if (std::abs(actual - expected) > tol) {
+    return NearResult::kOutOfTolerance;
+  }
+  return NearResult::kPass;
+}
+
+bool expectNear(double actual, double expected, const char* what,
                 const std::string& casename) {
-  const double err = std::abs(actual - expected);
-  if (err > kTol) {
-    char buf[256];
+  const NearResult result = checkNear(actual, expected, kTol);
+  if (result == NearResult::kPass) {
+    return true;
+  }
+
+  char buf[256];
+  if (result == NearResult::kNonFinite) {
+    std::snprintf(
+        buf, sizeof(buf),
+        "[%s] %s: non-finite input rejected (actual %.17g, expected %.17g)",
+        casename.c_str(), what, actual, expected);
+  } else {
+    const double err = std::abs(actual - expected);
     std::snprintf(buf, sizeof(buf),
                   "[%s] %s: actual %.17g, expected %.17g, |err| %.3g > tol %.3g",
                   casename.c_str(), what, actual, expected, err, kTol);
-    fail(buf);
   }
+  fail(buf);
+  return false;
 }
 
 void runCase(const std::string& name, const Eigen::Vector3d& axis,
@@ -67,6 +110,47 @@ void runCase(const std::string& name, const Eigen::Vector3d& axis,
   expectNear((logR - so3).norm(), 0.0, "MatrixLog3(R) - so3", name);
 }
 
+void expectRejected(const char* what, NearResult got, NearResult wanted) {
+  if (got == wanted) {
+    return;
+  }
+  char buf[256];
+  std::snprintf(buf, sizeof(buf), "negative-control %s: expected %s, got %s",
+                what, NearResultName(wanted), NearResultName(got));
+  fail(buf);
+}
+
+// Internal negative controls for the rejection logic. Each expects checkNear to
+// reject the invalid inputs (non-finite, or finite-but-out-of-tolerance) and to
+// accept only genuinely valid finite inputs. A control fails only if the
+// rejection/acceptance behavior is wrong, so a correctly-behaving assertion
+// leaves g_failures untouched and does not fail the ordinary test program.
+void runNegativeControls() {
+  const double inf = std::numeric_limits<double>::infinity();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+
+  struct NegativeCase {
+    const char* what;
+    double actual;
+    double expected;
+    NearResult wanted;
+  };
+
+  const NegativeCase cases[] = {
+      {"NaN actual", nan, 0.0, NearResult::kNonFinite},
+      {"NaN expected", 0.0, nan, NearResult::kNonFinite},
+      {"equal +inf", inf, inf, NearResult::kNonFinite},
+      {"equal -inf", -inf, -inf, NearResult::kNonFinite},
+      {"+inf vs -inf", inf, -inf, NearResult::kNonFinite},
+      {"finite out-of-tolerance", 1.0, 2.0, NearResult::kOutOfTolerance},
+      {"finite within-tolerance", 0.0, 1e-15, NearResult::kPass},
+  };
+
+  for (const NegativeCase& c : cases) {
+    expectRejected(c.what, checkNear(c.actual, c.expected, kTol), c.wanted);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -87,8 +171,11 @@ int main() {
     }
   }
 
+  runNegativeControls();
+
   if (g_failures == 0) {
-    std::printf("PASS: all SO(3) roundtrip invariants within tolerance %.3g\n",
+    std::printf("PASS: all SO(3) roundtrip invariants within tolerance %.3g "
+                "and negative controls rejected non-finite inputs\n",
                 kTol);
     return 0;
   }
