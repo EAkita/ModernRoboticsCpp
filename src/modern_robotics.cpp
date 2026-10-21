@@ -6,6 +6,7 @@
  * Provides useful Jacobian and frame representation functions
  */
 #include <Eigen/Dense>
+#include <Eigen/Geometry>
 #include <cmath>
 #include <vector>
 
@@ -111,27 +112,16 @@ namespace mr {
 	 * Returns: matrix logarithm of a rotation
 	 */
 	Eigen::Matrix3d MatrixLog3(const Eigen::Matrix3d& R) {
-		double acosinput = (R.trace() - 1) / 2.0;
-		Eigen::MatrixXd m_ret = Eigen::MatrixXd::Zero(3, 3);
-		if (acosinput >= 1)
-			return m_ret;
-		else if (acosinput <= -1) {
-			Eigen::Vector3d omg;
-			if (!NearZero(1 + R(2, 2)))
-				omg = (1.0 / std::sqrt(2 * (1 + R(2, 2))))*Eigen::Vector3d(R(0, 2), R(1, 2), 1 + R(2, 2));
-			else if (!NearZero(1 + R(1, 1)))
-				omg = (1.0 / std::sqrt(2 * (1 + R(1, 1))))*Eigen::Vector3d(R(0, 1), 1 + R(1, 1), R(2, 1));
-			else
-				omg = (1.0 / std::sqrt(2 * (1 + R(0, 0))))*Eigen::Vector3d(1 + R(0, 0), R(1, 0), R(2, 0));
-			m_ret = VecToso3(M_PI * omg);
-			return m_ret;
-		}
-		else {
-			double theta = std::acos(acosinput);
-			m_ret = theta / 2.0 / sin(theta)*(R - R.transpose());
-			return m_ret;
-		}
+		// Extract a stable axis and angle, including rotations arbitrarily
+		// close to pi. The trace/acos and sin(theta) quotient is ill-conditioned
+		// in that region and can lose the entire rotation at exactly pi.
+		const Eigen::AngleAxisd rotation(R);
+		const double theta = rotation.angle();
+		if (theta == 0.0)
+			return Eigen::Matrix3d::Zero();
+		return VecToso3(rotation.axis() * theta);
 	}
+
 
 	/* Function: Combines a rotation matrix and position vector into a single
 	 * 				Special Euclidian Group (SE3) homogeneous transformation matrix
@@ -258,7 +248,8 @@ namespace mr {
 				0, 0, 0, 0;
 		}
 		else {
-			double theta = std::acos((rp.at(0).trace() - 1) / 2.0);
+			// Reuse the angle from the same logarithm, avoiding a second unstable trace/acos extraction near pi.
+			const double theta = so3ToVec(omgmat).norm();
 			Eigen::Matrix3d logExpand1 = Eigen::MatrixXd::Identity(3, 3) - omgmat / 2.0;
 			Eigen::Matrix3d logExpand2 = (1.0 / theta - 1.0 / std::tan(theta / 2.0) / 2)*omgmat*omgmat / theta;
 			Eigen::Matrix3d logExpand = logExpand1 + logExpand2;
